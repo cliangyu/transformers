@@ -1064,6 +1064,7 @@ else:
             "TypicalLogitsWarper",
             "UnbatchedClassifierFreeGuidanceLogitsProcessor",
             "WhisperTimeStampLogitsProcessor",
+            "ContrastiveDecodingLogitsProcessor",
             "top_k_top_p_filtering",
         ]
     )
@@ -5123,6 +5124,7 @@ if TYPE_CHECKING:
             TypicalLogitsWarper,
             UnbatchedClassifierFreeGuidanceLogitsProcessor,
             WhisperTimeStampLogitsProcessor,
+            ContrastiveDecodingLogitsProcessor,
             top_k_top_p_filtering,
         )
         from .modeling_utils import PreTrainedModel

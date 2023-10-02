@@ -72,6 +72,7 @@ else:
         "TypicalLogitsWarper",
         "UnbatchedClassifierFreeGuidanceLogitsProcessor",
         "WhisperTimeStampLogitsProcessor",
+        "ContrastiveDecodingLogitsProcessor",
     ]
     _import_structure["stopping_criteria"] = [
         "MaxNewTokensCriteria",
@@ -206,6 +207,7 @@ if TYPE_CHECKING:
             TypicalLogitsWarper,
             UnbatchedClassifierFreeGuidanceLogitsProcessor,
             WhisperTimeStampLogitsProcessor,
+            ContrastiveDecodingLogitsProcessor
         )
         from .stopping_criteria import (
             MaxLengthCriteria,
