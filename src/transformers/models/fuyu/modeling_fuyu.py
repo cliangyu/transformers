@@ -210,11 +210,7 @@ class FuyuForCausalLM(FuyuPreTrainedModel):
     @add_start_docstrings_to_model_forward(FUYU_INPUTS_DOCSTRING)
     def forward(
         self,
-        input_ids: torch.LongTensor = None,
-        image_patches: torch.Tensor = None,  # [batch_size, num_total_patches, patch_size_ x patch_size x num_channels ]
-        image_patches_indices: torch.Tensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        sequences,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
@@ -230,15 +226,51 @@ class FuyuForCausalLM(FuyuPreTrainedModel):
 
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        # retrieve input_ids and inputs_embeds
-        if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both decoder_input_ids and decoder_inputs_embeds at the same time")
-        elif input_ids is not None:
-            batch_size, seq_length = input_ids.shape
-        elif inputs_embeds is not None:
-            batch_size, seq_length, _ = inputs_embeds.shape
-        else:
-            raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
+        full_input_embeds = []
+        full_attention_mask = None # []
+
+        for batch in sequences:
+            current_input_embeds = []
+
+            for sequence in batch:
+                input_ids = None
+                image_patches = None
+                image_patches_indices = None
+
+                inputs_embeds = None
+
+                if 'input_ids' in sequence:
+                    input_ids = sequence['input_ids']
+                
+                if 'image_patches' in sequence:
+                    image_patches = sequence['image_patches']
+                
+                if 'image_patches_indices' in sequence:
+                    image_patches_indices = sequence['image_patches_indices']
+
+                if inputs_embeds is None:
+                    inputs_embeds = self.language_model.get_input_embeddings()(input_ids)
+                    if image_patches is not None and past_key_values is None:
+                        patch_embeddings = [
+                            self.vision_embed_tokens(patch.to(self.vision_embed_tokens.weight.dtype)).squeeze(0)
+                            for patch in image_patches
+                        ]
+                        inputs_embeds = self.gather_continuous_embeddings(
+                            word_embeddings=inputs_embeds,
+                            continuous_embeddings=patch_embeddings,
+                            image_patch_input_indices=image_patches_indices,
+                        )
+
+                current_input_embeds.append(inputs_embeds)
+
+            current_input_embeds = torch.cat(current_input_embeds, dim=1)
+            full_input_embeds.append(current_input_embeds)
+
+        full_input_embeds = torch.cat(full_input_embeds, dim=0)
+
+        position_ids = None
+
+        batch_size, seq_length, _ = full_input_embeds.shape
 
         seq_length_with_past = seq_length
         past_key_values_length = 0
@@ -248,32 +280,23 @@ class FuyuForCausalLM(FuyuPreTrainedModel):
             seq_length_with_past = seq_length_with_past + past_key_values_length
 
         if position_ids is None:
-            device = input_ids.device if input_ids is not None else inputs_embeds.device
+            device = input_ids.device if input_ids is not None else full_input_embeds.device
             position_ids = torch.arange(
                 past_key_values_length, seq_length + past_key_values_length, dtype=torch.long, device=device
             )
             position_ids = position_ids.unsqueeze(0)
 
-        if inputs_embeds is None:
-            inputs_embeds = self.language_model.get_input_embeddings()(input_ids)
-            if image_patches is not None and past_key_values is None:
-                patch_embeddings = [
-                    self.vision_embed_tokens(patch.to(self.vision_embed_tokens.weight.dtype)).squeeze(0)
-                    for patch in image_patches
-                ]
-                inputs_embeds = self.gather_continuous_embeddings(
-                    word_embeddings=inputs_embeds,
-                    continuous_embeddings=patch_embeddings,
-                    image_patch_input_indices=image_patches_indices,
-                )
+        full_attention_mask = torch.ones(full_input_embeds.shape[:2])
+
+        print(full_input_embeds.shape)
 
         outputs = self.language_model(
-            inputs_embeds=inputs_embeds,
-            attention_mask=attention_mask,
+            inputs_embeds=full_input_embeds,
+            attention_mask=full_attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
             output_attentions=output_attentions,
-            use_cache=use_cache,
+            use_cache=use_cache
         )
         if not return_dict:
             return tuple(v for v in outputs if v is not None)

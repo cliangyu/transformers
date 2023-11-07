@@ -18,11 +18,14 @@ Image/Text processor class for GIT
 import re
 from typing import Dict, List, Optional, Tuple, Union
 
+import PIL
+
 import numpy as np
 
 from ...processing_utils import ProcessorMixin
 from ...tokenization_utils_base import PaddingStrategy, TruncationStrategy
 from ...utils import TensorType, is_torch_available, logging, requires_backends
+from .configuration_fuyu import FuyuConfig
 
 
 if is_torch_available():
@@ -332,6 +335,8 @@ class FuyuProcessor(ProcessorMixin):
         self.pad_token_id = 0
         self.dummy_image_index = -1
 
+        self.image_placeholder_tag = '<image>'
+
     def _left_pad_inputs_with_attention_mask(self, model_inputs: List[Dict], return_attention_mask: bool):
         max_length_input_ids = max(entry["input_ids"].shape[1] for entry in model_inputs)
         max_length_image_patch_indices = max(entry["image_patches_indices"].shape[1] for entry in model_inputs)
@@ -447,7 +452,20 @@ class FuyuProcessor(ProcessorMixin):
         }
         return batch_encoding
 
-    def __call__(
+    def interleave_text_images(self, current_text, current_images):
+        text_parts = current_text.split(self.image_placeholder_tag)
+
+        if not current_images:
+            return [[text_parts[0], None]]
+
+        if len(text_parts) > len(current_images):
+            current_images.append(None)
+
+        current_interleaved = [[item[0] if len(item[0]) > 0 else None, item[1]] for item in zip(text_parts, current_images)]
+
+        return current_interleaved
+
+    def process(
         self,
         text=None,
         images=None,
@@ -569,6 +587,114 @@ class FuyuProcessor(ProcessorMixin):
             model_inputs=all_encodings, return_attention_mask=return_attention_mask
         )
         return FuyuBatchFeature(data=batch_encoding)
+
+    def __call__(
+            self,
+            text=None,
+            images=None,
+            add_special_tokens: bool = True,
+            return_attention_mask: bool = True,
+            padding: Union[bool, str, PaddingStrategy] = False,
+            truncation: Union[bool, str, TruncationStrategy] = None,
+            max_length: Optional[int] = None,
+            stride: int = 0,
+            pad_to_multiple_of: Optional[int] = None,
+            return_overflowing_tokens: bool = False,
+            return_special_tokens_mask: bool = False,
+            return_offsets_mapping: bool = False,
+            return_token_type_ids: bool = False,
+            return_length: bool = False,
+            verbose: bool = True,
+            return_tensors: Optional[Union[str, TensorType]] = None,
+            **kwargs
+        ): # -> "FuyuBatchFeature":
+        if isinstance(text, str):
+            text = [text] # str -> List[str]
+
+        if all(isinstance(image, PIL.Image.Image) for image in images):
+            images = [images] # List[PIL.Image.Image] -> List[List[PIL.Image.Image]]
+        
+        interleaved = []
+
+        for current_text, current_images in zip(text, images):
+            # text -> str
+            # images -> List[PIL.Image.Image]
+
+            if self.image_placeholder_tag not in current_text: # No image tags
+                interleaved.append([[current_text, None]])
+
+                continue
+
+            interleaved.append(self.interleave_text_images(current_text, current_images))
+        
+        encoded_sequences = []
+        sequences_lengths = []
+
+        for current_interleaved in interleaved:
+            current_encoded_sequence = []
+            current_sequences_lengths = []
+            
+            for part in current_interleaved:
+                if part[0] is None and part[1] is None:
+                    continue
+                
+                encoded = self.process(
+                    text=part[0],
+                    images=part[1],
+                    add_special_tokens=add_special_tokens,
+                    return_attention_mask=return_attention_mask,
+                    padding=False,
+                    truncation=truncation,
+                    max_length=max_length,
+                    stride=stride,
+                    pad_to_multiple_of=pad_to_multiple_of,
+                    return_overflowing_tokens=return_overflowing_tokens,
+                    return_special_tokens_mask=return_special_tokens_mask,
+                    return_offsets_mapping=return_offsets_mapping,
+                    return_token_type_ids=return_token_type_ids,
+                    return_length=return_length,
+                    verbose=verbose,
+                    return_tensors=return_tensors,
+                    **kwargs
+                )
+
+                current_encoded_sequence.append(encoded)
+                current_sequences_lengths.append(encoded['input_ids'].shape[1])
+
+            encoded_sequences.append(current_encoded_sequence)
+            sequences_lengths.append(sum(current_sequences_lengths))
+
+        max_sequence_length = max(sequences_lengths)
+
+        for idx, sequence_length in enumerate(sequences_lengths):
+            sequence_length_delta = max_sequence_length - sequence_length
+
+            if sequence_length_delta == 0:
+                continue
+
+            encoded = self.process(
+                text=(self.tokenizer.eos_token * (sequence_length_delta - 1)),
+                images=None,
+                add_special_tokens=add_special_tokens,
+                return_attention_mask=return_attention_mask,
+                padding=False,
+                truncation=truncation,
+                max_length=max_length,
+                stride=stride,
+                pad_to_multiple_of=pad_to_multiple_of,
+                return_overflowing_tokens=return_overflowing_tokens,
+                return_special_tokens_mask=return_special_tokens_mask,
+                return_offsets_mapping=return_offsets_mapping,
+                return_token_type_ids=return_token_type_ids,
+                return_length=return_length,
+                verbose=verbose,
+                return_tensors=return_tensors,
+                **kwargs
+            )
+
+            encoded_sequences[idx].append(encoded)
+
+        return encoded_sequences
 
     def post_process_box_coordinates(self, outputs, target_sizes=None):
         """
