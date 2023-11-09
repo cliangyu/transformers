@@ -456,12 +456,21 @@ class FuyuProcessor(ProcessorMixin):
         text_parts = current_text.split(self.image_placeholder_tag)
 
         if not current_images:
-            return [[text_parts[0], None]]
+            return [[None, text_parts[0]]]
 
-        if len(text_parts) > len(current_images):
-            current_images.append(None)
+        current_interleaved = [[None, text_parts[0]]]
 
-        current_interleaved = [[item[0] if len(item[0]) > 0 else None, item[1]] for item in zip(text_parts, current_images)]
+        if len(text_parts) > 1:
+            for idx in range(len(text_parts) - 1):
+                idx += 1
+
+                text_part = text_parts[idx]
+                image = current_images[idx - 1]
+
+                if len(text_part) == 0:
+                    text_part = None
+
+                current_interleaved.append([image, text_part])
 
         return current_interleaved
 
@@ -621,12 +630,14 @@ class FuyuProcessor(ProcessorMixin):
             # images -> List[PIL.Image.Image]
 
             if self.image_placeholder_tag not in current_text: # No image tags
-                interleaved.append([[current_text, None]])
+                interleaved.append([[None, current_text]])
 
                 continue
 
             interleaved.append(self.interleave_text_images(current_text, current_images))
         
+        print(interleaved)
+
         encoded_sequences = []
         sequences_lengths = []
 
@@ -639,8 +650,8 @@ class FuyuProcessor(ProcessorMixin):
                     continue
                 
                 encoded = self.process(
-                    text=part[0],
-                    images=part[1],
+                    text=part[1],
+                    images=part[0],
                     add_special_tokens=add_special_tokens,
                     return_attention_mask=return_attention_mask,
                     padding=False,
@@ -664,37 +675,39 @@ class FuyuProcessor(ProcessorMixin):
             encoded_sequences.append(current_encoded_sequence)
             sequences_lengths.append(sum(current_sequences_lengths))
 
-        max_sequence_length = max(sequences_lengths)
+        all_accumulated = []
 
-        for idx, sequence_length in enumerate(sequences_lengths):
-            sequence_length_delta = max_sequence_length - sequence_length
+        for encoded_sequence in encoded_sequences:
+            all_accumulated.append({})
+            
+            for part in encoded_sequence:  # Concat, consider edge cases (e.g. image_patches_indices needing to be shifted, as each segment starts from 0 or image_patches, which is a list)
+                for key, value in part.items():
+                    if key not in all_accumulated[-1]:
+                        all_accumulated[-1][key] = value
+                    else:
+                        if isinstance(value, torch.Tensor) and key != 'image_patches_indices':
+                            all_accumulated[-1][key] = torch.cat(
+                                [all_accumulated[-1][key], value],
+                                dim=1
+                            )
+                        elif key == 'image_patches_indices':
+                            value_shifted = value
 
-            if sequence_length_delta == 0:
-                continue
+                            for idx in range(value.shape[1]):
+                                if value_shifted[0, idx] != -1:
+                                    value_shifted[0, idx] += all_accumulated[-1][key].shape[1]
 
-            encoded = self.process(
-                text=(self.tokenizer.eos_token * (sequence_length_delta - 1)),
-                images=None,
-                add_special_tokens=add_special_tokens,
-                return_attention_mask=return_attention_mask,
-                padding=False,
-                truncation=truncation,
-                max_length=max_length,
-                stride=stride,
-                pad_to_multiple_of=pad_to_multiple_of,
-                return_overflowing_tokens=return_overflowing_tokens,
-                return_special_tokens_mask=return_special_tokens_mask,
-                return_offsets_mapping=return_offsets_mapping,
-                return_token_type_ids=return_token_type_ids,
-                return_length=return_length,
-                verbose=verbose,
-                return_tensors=return_tensors,
-                **kwargs
-            )
+                            all_accumulated[-1][key] = torch.cat(
+                                [all_accumulated[-1][key], value_shifted],
+                                dim=1
+                            )
+                        elif key == 'image_patches':
+                            all_accumulated[-1][key][0] = torch.cat(
+                                [all_accumulated[-1][key][0], value[0]],
+                                dim=1
+                            )
 
-            encoded_sequences[idx].append(encoded)
-
-        return encoded_sequences
+        return all_accumulated
 
     def post_process_box_coordinates(self, outputs, target_sizes=None):
         """
