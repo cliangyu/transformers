@@ -695,7 +695,8 @@ class FuyuProcessor(ProcessorMixin):
 
                             for idx in range(value.shape[1]):
                                 if value_shifted[0, idx] != -1:
-                                    value_shifted[0, idx] += all_accumulated[-1][key].shape[1]
+                                    num_valid_tokens = (all_accumulated[-1][key][0] != -1).sum().item()
+                                    value_shifted[0, idx] += num_valid_tokens
 
                             all_accumulated[-1][key] = torch.cat(
                                 [all_accumulated[-1][key], value_shifted],
