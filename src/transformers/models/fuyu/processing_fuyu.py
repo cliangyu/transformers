@@ -333,6 +333,7 @@ class FuyuProcessor(ProcessorMixin):
         self.max_tokens_to_generate = 10
         self.max_position_embeddings = 16384  # TODO Can't derive this from model files: where to set it?
         self.pad_token_id = 0
+        self.attention_pad_value = 1
         self.dummy_image_index = -1
 
         self.image_placeholder_tag = '<image>'
@@ -453,6 +454,8 @@ class FuyuProcessor(ProcessorMixin):
         return batch_encoding
 
     def interleave_text_images(self, current_text, current_images):
+        assert current_text.count(self.image_placeholder_tag) == len(current_images), 'The number of image placeholders must match the number of provided images'
+        
         text_parts = current_text.split(self.image_placeholder_tag)
 
         if not current_images:
@@ -635,8 +638,6 @@ class FuyuProcessor(ProcessorMixin):
                 continue
 
             interleaved.append(self.interleave_text_images(current_text, current_images))
-        
-        print(interleaved)
 
         encoded_sequences = []
         sequences_lengths = []
@@ -703,12 +704,73 @@ class FuyuProcessor(ProcessorMixin):
                                 dim=1
                             )
                         elif key == 'image_patches':
-                            all_accumulated[-1][key][0] = torch.cat(
-                                [all_accumulated[-1][key][0], value[0]],
-                                dim=1
-                            )
+                            # all_accumulated[-1][key][0] = torch.cat(
+                            #     [all_accumulated[-1][key][0], value[0]],
+                            #     dim=1
+                            # )
 
-        return all_accumulated
+                            all_accumulated[-1][key].append(value[0])
+
+        all_max_lengths = {}
+        all_lengths = {}
+
+        for encoded_sequence in all_accumulated:
+            for key, value in encoded_sequence.items():
+                if isinstance(value, torch.Tensor):
+                    if key not in all_lengths:
+                        all_lengths[key] = []
+
+                    all_lengths[key].append(value.shape[1])
+
+        for key, value in all_lengths.items():
+            all_max_lengths[key] = max(value)
+
+        all_accumulated_padded = {}
+
+        padding_token_idx = self.pad_token_id
+
+        for encoded_sequence in all_accumulated:
+            for key, value in encoded_sequence.items():
+                if key not in all_accumulated_padded:
+                    all_accumulated_padded[key] = []
+
+                _value = value
+
+                if isinstance(value, torch.Tensor):
+                    current_length = value.shape[1]
+
+                    current_padding_token_idx = padding_token_idx
+
+                    if key == 'image_patches_indices':
+                        current_padding_token_idx = -1
+                    elif key == 'attention_mask':
+                        current_padding_token_idx = self.attention_pad_value 
+
+                    if current_length < all_max_lengths[key]:
+                        _value = torch.cat([
+                            value,
+                            torch.tensor([[current_padding_token_idx] * (all_max_lengths[key] - current_length)])
+                        ], dim=1)
+                elif key == 'image_patches':
+                    _value = torch.cat(value, dim=1)
+
+                all_accumulated_padded[key].append(_value)
+
+        output = {}
+
+        for key, value in all_accumulated_padded.items():
+            _value = value
+
+            if key == 'image_patches':
+                pass # _value = torch.cat(value, dim=1)
+            else:
+                if len(value) > 0:
+                    if isinstance(value[0], torch.Tensor):
+                        _value = torch.cat(value, dim=0)
+
+            output[key] = _value
+
+        return output
 
     def post_process_box_coordinates(self, outputs, target_sizes=None):
         """
