@@ -770,7 +770,7 @@ class FuyuProcessor(ProcessorMixin):
 
             output[key] = _value
 
-        return output
+        return FuyuBatchFeature(data=output)
 
     def post_process_box_coordinates(self, outputs, target_sizes=None):
         """
