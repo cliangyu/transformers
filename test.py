@@ -52,8 +52,8 @@ def main():
     # Test case #1: There is a single image
 
     output = generate(
-        text=text_prompt_0,
-        images=image_0,
+        text=[text_prompt_0],
+        images=[[image_0]],
 
         verbose=True
     )
@@ -65,8 +65,8 @@ def main():
     # patch embeddings are clearly separated by other tokens)
 
     output = generate(
-        text=text_prompt_1,
-        images=[image_0, image_1],
+        text=[text_prompt_1],
+        images=[[image_0, image_1]],
 
         verbose=True
     )
@@ -76,8 +76,8 @@ def main():
     # Test case #3: The image placeholders are adjacent
 
     output = generate(
-        text=text_prompt_2,
-        images=[image_0, image_1],
+        text=[text_prompt_2],
+        images=[[image_0, image_1]],
 
         verbose=True
     )
@@ -87,8 +87,8 @@ def main():
     # Test case #4: The image is located at the end of the prompt
 
     output = generate(
-        text=text_prompt_3,
-        images=image_0,
+        text=[text_prompt_3],
+        images=[[image_0]],
 
         verbose=True
     )
@@ -98,7 +98,7 @@ def main():
     # Test case #5: There is no image at all
 
     output = generate(
-        text=text_prompt_4,
+        text=[text_prompt_4],
 
         verbose=True
     )
@@ -108,7 +108,7 @@ def main():
     # Test case #6: There is no text at all
 
     output = generate(
-        images=image_0,
+        images=[image_0],
 
         verbose=True
     )
@@ -119,7 +119,7 @@ def main():
 
     try:
         output = generate(
-            text=text_prompt_0,
+            text=[text_prompt_0],
 
             verbose=True
         )
