@@ -623,8 +623,9 @@ class FuyuProcessor(ProcessorMixin):
         if isinstance(text, str):
             text = [text] # str -> List[str]
 
-        if all(isinstance(image, PIL.Image.Image) for image in images):
-            images = [images] # List[PIL.Image.Image] -> List[List[PIL.Image.Image]]
+        if images is not None:
+            if all(isinstance(image, PIL.Image.Image) for image in images):
+                images = [images] # List[PIL.Image.Image] -> List[List[PIL.Image.Image]]
         
         interleaved = []
 
