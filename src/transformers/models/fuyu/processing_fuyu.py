@@ -454,8 +454,16 @@ class FuyuProcessor(ProcessorMixin):
         return batch_encoding
 
     def interleave_text_images(self, current_text, current_images):
-        assert current_text.count(self.image_placeholder_tag) == len(current_images), 'The number of image placeholders must match the number of provided images'
-        
+        assert (current_text is not None) and (current_images is not None), 'Both text and images can\'t be None'
+
+        num_image_placeholders = current_text.count(self.image_placeholder_tag)
+        assert num_image_placeholders == len(current_images), 'The number of image placeholders must match the number of provided images'
+
+        if current_text is None:
+            current_text = self.image_placeholder_tag * len(current_images)
+        elif current_images is None:
+            current_images = [None] * num_images_placeholders
+
         text_parts = current_text.split(self.image_placeholder_tag)
 
         if not current_images:
