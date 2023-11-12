@@ -129,7 +129,7 @@ def main():
         print(exception, end='\n\n\n\n')
         print('Success!', end='\n\n\n\n--------')
 
-    # Text case #8: Batching
+    # Test case #8: Batching
 
     output = generate(
         text=[text_prompt_0, text_prompt_0],
