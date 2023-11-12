@@ -34,8 +34,8 @@ def main():
     # Different prompts, to test different cases
 
     text_prompt_0 = 'Q: Describe <image>\nA:'
-    text_prompt_1 = 'Q: Given <image and <image>, spot the differences\nA:'
-    text_prompt_2 = 'Q: Are <image>image> the same image?'
+    text_prompt_1 = 'Q: Given <image> and <image>, spot the differences\nA:'
+    text_prompt_2 = 'Q: Are <image><image> the same image?'
     text_prompt_3 = 'Tell me about <image>'
     text_prompt_4 = 'Q: Tell me about Germany\nA:'
 
