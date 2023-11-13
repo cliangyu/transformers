@@ -646,6 +646,16 @@ class FuyuProcessor(ProcessorMixin):
 
                 continue
 
+            if current_text is None:
+                interleaved.append([[current_images, None]])
+
+                continue
+            
+            if current_images is None:
+                interleaved.append([[None, current_text]])
+
+                continue
+            
             interleaved.append(self.interleave_text_images(current_text, current_images))
 
         encoded_sequences = []
