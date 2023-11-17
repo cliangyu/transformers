@@ -55,8 +55,6 @@ to a given token).
 
 [[autodoc]] PreTrainedTokenizer
     - __call__
-    - add_tokens
-    - add_special_tokens
     - apply_chat_template
     - batch_decode
     - decode
@@ -71,8 +69,6 @@ loaded very simply into 🤗 transformers. Take a look at the [Using tokenizers 
 
 [[autodoc]] PreTrainedTokenizerFast
     - __call__
-    - add_tokens
-    - add_special_tokens
     - apply_chat_template
     - batch_decode
     - decode

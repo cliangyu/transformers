@@ -18,11 +18,14 @@ Image/Text processor class for GIT
 import re
 from typing import Dict, List, Optional, Tuple, Union
 
+import PIL
+
 import numpy as np
 
 from ...processing_utils import ProcessorMixin
 from ...tokenization_utils_base import PaddingStrategy, TruncationStrategy
 from ...utils import TensorType, is_torch_available, logging, requires_backends
+from .configuration_fuyu import FuyuConfig
 
 
 if is_torch_available():
@@ -330,7 +333,10 @@ class FuyuProcessor(ProcessorMixin):
         self.max_tokens_to_generate = 10
         self.max_position_embeddings = 16384  # TODO Can't derive this from model files: where to set it?
         self.pad_token_id = 0
+        self.attention_pad_value = 1
         self.dummy_image_index = -1
+
+        self.image_placeholder_tag = '<image>'
 
     def _left_pad_inputs_with_attention_mask(self, model_inputs: List[Dict], return_attention_mask: bool):
         max_length_input_ids = max(entry["input_ids"].shape[1] for entry in model_inputs)
@@ -447,7 +453,53 @@ class FuyuProcessor(ProcessorMixin):
         }
         return batch_encoding
 
-    def __call__(
+    def interleave_text_images(self, current_text, current_images):
+        assert (current_text is not None) and (current_images is not None), 'Both text and images can\'t be None'
+
+        num_image_placeholders = current_text.count(self.image_placeholder_tag)
+        if not (num_image_placeholders == 0 and current_images == [None]):
+            assert num_image_placeholders == len(current_images), 'The number of image placeholders must match the number of provided images'
+
+        if current_text is None:
+            current_text = self.image_placeholder_tag * len(current_images)
+        elif current_images is None:
+            current_images = [None] * num_image_placeholders
+
+        text_parts = current_text.split(self.image_placeholder_tag)
+
+        if not current_images:
+            return [[None, text_parts[0]]]
+
+        current_interleaved = [[None, text_parts[0]]]
+
+        if len(text_parts) > 1:
+            for idx in range(len(text_parts) - 1):
+                idx += 1
+
+                text_part = text_parts[idx]
+                image = current_images[idx - 1]
+
+                if len(text_part) == 0:
+                    text_part = None
+
+                current_interleaved.append([image, text_part])
+
+        return current_interleaved
+    
+    def normalize_images(self, images):
+        normalized_images = []
+        for img in images:
+            if img is None:
+                normalized_images.append(None)
+            elif isinstance(img, PIL.Image.Image):
+                normalized_images.append([img])
+            elif all(isinstance(i, PIL.Image.Image) for i in img):
+                normalized_images.append(img)
+            else:
+                normalized_images.append(None)  
+        return normalized_images
+
+    def process(
         self,
         text=None,
         images=None,
@@ -569,6 +621,227 @@ class FuyuProcessor(ProcessorMixin):
             model_inputs=all_encodings, return_attention_mask=return_attention_mask
         )
         return FuyuBatchFeature(data=batch_encoding)
+
+    def __call__(
+            self,
+            text=None,
+            images=None,
+            add_special_tokens: bool = True,
+            return_attention_mask: bool = True,
+            padding: Union[bool, str, PaddingStrategy] = False,
+            truncation: Union[bool, str, TruncationStrategy] = None,
+            max_length: Optional[int] = None,
+            stride: int = 0,
+            pad_to_multiple_of: Optional[int] = None,
+            return_overflowing_tokens: bool = False,
+            return_special_tokens_mask: bool = False,
+            return_offsets_mapping: bool = False,
+            return_token_type_ids: bool = False,
+            return_length: bool = False,
+            verbose: bool = True,
+            return_tensors: Optional[Union[str, TensorType]] = None,
+            **kwargs
+        ): # -> "FuyuBatchFeature":
+        # if isinstance(text, str):
+        #     text = [text] # str -> List[str]
+
+        # if images is not None:
+        #     if all(isinstance(image, PIL.Image.Image) for image in images):
+        #         images = [images] # List[PIL.Image.Image] -> List[List[PIL.Image.Image]]
+
+        # if text is None:
+        #     text = [None]
+        # elif isinstance(text, str):
+        #     text = [text]
+        
+        # if images is None:
+        #     images = [None] * len(text)  # Create a list of Nones equal to the length of text
+        # elif all(isinstance(image, PIL.Image.Image) for image in images):
+        #     images = [images]  # Convert List[PIL.Image.Image] to List[List[PIL.Image.Image]]
+
+        if text is None:
+            text = [None]
+        elif isinstance(text, str):
+            text = [text]
+        else:
+            text = list(text)
+
+        if images is None:
+            images = [None] * len(text)
+        else:
+            images = self.normalize_images(images)
+
+        interleaved = []
+
+        for current_text, current_images in zip(text, images):
+            # text -> str
+            # images -> List[PIL.Image.Image]
+
+            if current_text is None:
+                if current_images is None:
+                    interleaved.append([[None, None]])
+                else:
+                    interleaved.append([[current_images, None]])
+                continue
+
+            # if self.image_placeholder_tag not in current_text:
+            #     interleaved.append([[None, current_text]])
+            #     continue
+
+            if current_images is None and self.image_placeholder_tag not in current_text:
+                interleaved.append([[None, current_text]])
+                continue                
+            
+            interleaved.append(self.interleave_text_images(current_text, current_images))
+            
+            # if current_text is None:
+            #     if current_images is None:
+            #         interleaved.append([[None, None]])
+            #     else:
+            #         interleaved.append([[current_images, None]])
+            #     continue
+
+            # processed_images = []
+            # for img in current_images:
+            #     if img is None:
+            #         processed_images.append(None)  
+            #     else:
+            #         processed_images.append(img)
+
+            # interleaved.append(self.interleave_text_images(current_text, processed_images))
+        
+        encoded_sequences = []
+        sequences_lengths = []
+
+        for current_interleaved in interleaved:
+            current_encoded_sequence = []
+            current_sequences_lengths = []
+            
+            for part in current_interleaved:     
+                if part[0] is None and part[1] is None:
+                    continue
+                
+                encoded = self.process(
+                    text=part[1],
+                    images=part[0],
+                    add_special_tokens=add_special_tokens,
+                    return_attention_mask=return_attention_mask,
+                    padding=False,
+                    truncation=truncation,
+                    max_length=max_length,
+                    stride=stride,
+                    pad_to_multiple_of=pad_to_multiple_of,
+                    return_overflowing_tokens=return_overflowing_tokens,
+                    return_special_tokens_mask=return_special_tokens_mask,
+                    return_offsets_mapping=return_offsets_mapping,
+                    return_token_type_ids=return_token_type_ids,
+                    return_length=return_length,
+                    verbose=verbose,
+                    return_tensors=return_tensors,
+                    **kwargs
+                )
+
+                current_encoded_sequence.append(encoded)
+                current_sequences_lengths.append(encoded['input_ids'].shape[1])
+
+            encoded_sequences.append(current_encoded_sequence)
+            sequences_lengths.append(sum(current_sequences_lengths))
+
+        all_accumulated = []
+
+        for encoded_sequence in encoded_sequences:
+            all_accumulated.append({})
+            
+            for part in encoded_sequence:  # Concat, consider edge cases (e.g. image_patches_indices needing to be shifted, as each segment starts from 0 or image_patches, which is a list)
+                for key, value in part.items():
+                    if key not in all_accumulated[-1]:
+                        all_accumulated[-1][key] = value
+                    else:
+                        if isinstance(value, torch.Tensor) and key != 'image_patches_indices':
+                            all_accumulated[-1][key] = torch.cat(
+                                [all_accumulated[-1][key], value],
+                                dim=1
+                            )
+                        elif key == 'image_patches_indices':
+                            value_shifted = value
+
+                            for idx in range(value.shape[1]):
+                                if value_shifted[0, idx] != -1:
+                                    num_valid_tokens = (all_accumulated[-1][key][0] != -1).sum().item()
+                                    value_shifted[0, idx] += num_valid_tokens
+
+                            all_accumulated[-1][key] = torch.cat(
+                                [all_accumulated[-1][key], value_shifted],
+                                dim=1
+                            )
+                        elif key == 'image_patches':
+                            # all_accumulated[-1][key][0] = torch.cat(
+                            #     [all_accumulated[-1][key][0], value[0]],
+                            #     dim=1
+                            # )
+
+                            all_accumulated[-1][key].append(value[0])
+
+        all_max_lengths = {}
+        all_lengths = {}
+
+        for encoded_sequence in all_accumulated:
+            for key, value in encoded_sequence.items():
+                if isinstance(value, torch.Tensor):
+                    if key not in all_lengths:
+                        all_lengths[key] = []
+
+                    all_lengths[key].append(value.shape[1])
+
+        for key, value in all_lengths.items():
+            all_max_lengths[key] = max(value)
+
+        all_accumulated_padded = {}
+
+        padding_token_idx = self.pad_token_id
+
+        for encoded_sequence in all_accumulated:
+            for key, value in encoded_sequence.items():
+                if key not in all_accumulated_padded:
+                    all_accumulated_padded[key] = []
+
+                _value = value
+
+                if isinstance(value, torch.Tensor):
+                    current_length = value.shape[1]
+
+                    current_padding_token_idx = padding_token_idx
+
+                    if key == 'image_patches_indices':
+                        current_padding_token_idx = -1
+                    elif key == 'attention_mask':
+                        current_padding_token_idx = self.attention_pad_value 
+
+                    if current_length < all_max_lengths[key]:
+                        _value = torch.cat([
+                            value,
+                            torch.tensor([[current_padding_token_idx] * (all_max_lengths[key] - current_length)])
+                        ], dim=1)
+                elif key == 'image_patches':
+                    _value = torch.cat(value, dim=1)
+
+                all_accumulated_padded[key].append(_value)
+
+        output = {}
+
+        for key, value in all_accumulated_padded.items():
+            _value = value
+
+            if key == 'image_patches':
+                pass # _value = torch.cat(value, dim=1)
+            else:
+                if len(value) > 0:
+                    if isinstance(value[0], torch.Tensor):
+                        _value = torch.cat(value, dim=0)
+
+            output[key] = _value
+
+        return FuyuBatchFeature(data=output)
 
     def post_process_box_coordinates(self, outputs, target_sizes=None):
         """

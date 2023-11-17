@@ -44,16 +44,6 @@ class AWQLinearVersion(str, Enum):
     GEMM = "gemm"
     GEMV = "gemv"
 
-    @staticmethod
-    def from_str(version: str):
-        version = version.lower()
-        if version == "gemm":
-            return AWQLinearVersion.GEMM
-        elif version == "gemv":
-            return AWQLinearVersion.GEMV
-        else:
-            raise ValueError(f"Unknown AWQLinearVersion {version}")
-
 
 class AwqBackendPackingMethod(str, Enum):
     AUTOAWQ = "autoawq"
@@ -576,7 +566,6 @@ class AwqConfig(QuantizationConfigMixin):
                 f"Only supported quantization backends in {AwqBackendPackingMethod.AUTOAWQ} and {AwqBackendPackingMethod.LLMAWQ} - not recognized backend {self.backend}"
             )
 
-        self.version = AWQLinearVersion.from_str(self.version)
         if self.version not in [AWQLinearVersion.GEMM, AWQLinearVersion.GEMV]:
             raise ValueError(
                 f"Only supported versions are in [AWQLinearVersion.GEMM, AWQLinearVersion.GEMV] - not recognized version {self.version}"
