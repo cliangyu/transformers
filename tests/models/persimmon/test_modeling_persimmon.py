@@ -18,14 +18,18 @@
 import gc
 import unittest
 
+import pytest
 from parameterized import parameterized
 
 from transformers import PersimmonConfig, is_torch_available, set_seed
 from transformers.testing_utils import (
     backend_empty_cache,
+    require_bitsandbytes,
+    require_flash_attn,
     require_torch,
     require_torch_accelerator,
     require_torch_fp16,
+    require_torch_gpu,
     slow,
     torch_device,
 )
@@ -396,6 +400,61 @@ class PersimmonModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTester
         # The output should be different for long inputs
         self.assertFalse(torch.allclose(original_long_output, scaled_long_output, atol=1e-5))
 
+    @require_flash_attn
+    @require_torch_gpu
+    @require_bitsandbytes
+    @pytest.mark.flash_attn_test
+    @pytest.mark.skip("Persimmon configs do not have a pad nor eos token")
+    def test_flash_attn_2_generate_padding_right(self):
+        """
+        Overwritting the common test as the test is flaky on tiny models
+        """
+
+        model_id = "adept/persimmon-8b-chat"
+
+        _, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
+
+        dummy_input = inputs_dict["input_ids"]
+        if dummy_input.dtype in [torch.float32, torch.bfloat16]:
+            dummy_input = dummy_input.to(torch.float16)
+
+        dummy_attention_mask = inputs_dict.get("attention_mask", torch.ones_like(dummy_input))
+        # make sure we do right padding
+        dummy_attention_mask[:, :-1] = 1
+        dummy_attention_mask[:, -1:] = 0
+
+        model = PersimmonForCausalLM.from_pretrained(
+            model_id,
+            load_in_4bit=True,
+            device_map={"": 0},
+        )
+
+        out = model.generate(
+            dummy_input,
+            attention_mask=dummy_attention_mask,
+            max_new_tokens=1,
+            do_sample=False,
+        )
+
+        model = PersimmonForCausalLM.from_pretrained(
+            model_id,
+            load_in_4bit=True,
+            device_map={"": 0},
+            use_flash_attention_2=True,
+        )
+
+        out_fa = model.generate(
+            dummy_input,
+            attention_mask=dummy_attention_mask,
+            max_new_tokens=1,
+            do_sample=False,
+        )
+
+        print(out)
+        print(out_fa)
+
+        self.assertTrue(torch.equal(out, out_fa))
+
 
 @require_torch
 class PersimmonIntegrationTest(unittest.TestCase):
@@ -403,12 +462,26 @@ class PersimmonIntegrationTest(unittest.TestCase):
     def test_model_8b_chat_logits(self):
         input_ids = [1, 306, 4658, 278, 6593, 310, 2834, 338]
         model = PersimmonForCausalLM.from_pretrained(
-            "adept/persimmon-8b-chat", load_in_8bit=True, device_map={"": 0}, torch_dtype=torch.float16
+            "adept/persimmon-8b-chat",
+            load_in_8bit=True,
+            device_map={"": 0},
+            torch_dtype=torch.float16,
         )
         out = model(torch.tensor([input_ids], device=torch_device)).logits
 
         EXPECTED_MEAN = torch.tensor(
-            [[-11.4726, -11.1495, -11.2694, -11.2223, -10.9452, -11.0663, -11.0031, -11.1028]]
+            [
+                [
+                    -11.4726,
+                    -11.1495,
+                    -11.2694,
+                    -11.2223,
+                    -10.9452,
+                    -11.0663,
+                    -11.0031,
+                    -11.1028,
+                ]
+            ]
         )
         # change dtype to `torch.float32` before calling `mean` to avoid `nan` values
         torch.testing.assert_close(out.cpu().to(torch.float32).mean(-1), EXPECTED_MEAN, atol=1e-4, rtol=1e-4)
@@ -433,7 +506,10 @@ class PersimmonIntegrationTest(unittest.TestCase):
         tokenizer = AutoTokenizer.from_pretrained("adept/persimmon-8b-chat", use_fast=False)
         input_ids = tokenizer.encode(prompt, return_tensors="pt").to(torch_device)
         model = PersimmonForCausalLM.from_pretrained(
-            "adept/persimmon-8b-chat", load_in_8bit=True, device_map={"": 0}, torch_dtype=torch.float16
+            "adept/persimmon-8b-chat",
+            load_in_8bit=True,
+            device_map={"": 0},
+            torch_dtype=torch.float16,
         )
 
         # greedy generation outputs
