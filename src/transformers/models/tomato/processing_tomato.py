@@ -503,14 +503,14 @@ class TomatoProcessor(ProcessorMixin):
         for text_item, image_group in zip(text, images):
             # Handle the case where there is no text but there are images
             if text_item is None and image_group is not None:
-                prompt = "<|Image|>" * len([img for img in image_group if img is not None])
+                prompt = "<|IMAGESTART|>" * len([img for img in image_group if img is not None])
                 prompts.append([prompt])
                 images_list.append([img for img in image_group if img is not None])
             
             # Handle the case where there is text and possibly images
             elif text_item is not None:
-                # Counting the number of "<|Image|>" in text_item
-                image_indicator_count = text_item.count('<|Image|>')
+                # Counting the number of "<|IMAGESTART|>" in text_item
+                image_indicator_count = text_item.count('<|IMAGESTART|>')
                 
                 # Text with images
                 if image_group is not None:
@@ -524,7 +524,7 @@ class TomatoProcessor(ProcessorMixin):
                         
                         insert_count = len(image_group) - image_indicator_count
                         logger.warning(f"Inserting {insert_count} image place indicators before the prompt.")
-                        text_item = "<|Image|>" * insert_count + text_item
+                        text_item = "<|IMAGESTART|>" * insert_count + text_item
                    
                     prompt = text_item        
                     prompts.append([prompt])
@@ -557,9 +557,9 @@ class TomatoProcessor(ProcessorMixin):
 
         # --- Use self.tokenizer to get the ids of special tokens to insert into image ids ---
 
-        image_indicator_id = self.tokenizer("<|Image|>", add_special_tokens=False)["input_ids"][0]
-        image_placeholder_id = self.tokenizer("<|SPEAKER|>", add_special_tokens=False)["input_ids"][0] # add both tokens to tokenizer.json
-        image_newline_id = self.tokenizer("<|NEWLINE|>", add_special_tokens=False)["input_ids"][0]
+        image_indicator_id = self.tokenizer("<|IMAGESTART|>", add_special_tokens=False)["input_ids"][1]
+        image_placeholder_id = self.tokenizer("<|SPEAKER|>", add_special_tokens=False)["input_ids"][1] # add both tokens to tokenizer.json
+        image_newline_id = self.tokenizer("<|NEWLINE|>", add_special_tokens=False)["input_ids"][1]
         tensor_batch_images = [torch.stack(batch_image).unsqueeze(0) for batch_image in batch_images]
 
         # --- Use self.image_processor again to obtain the full token ids and batch inputs ---

@@ -17,13 +17,13 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.utils.checkpoint
-from torch import nn
+from torch import nn    
 
 from ...modeling_outputs import CausalLMOutputWithPast
 from ...modeling_utils import PreTrainedModel
 from ...utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging, replace_return_docstrings
 from .configuration_tomato import TomatoConfig
-from ...models.llama import LlamaForCausalLM
+from ...models.auto.modeling_auto import AutoModelForCausalLM
 
 
 logger = logging.get_logger(__name__)
@@ -151,7 +151,8 @@ class TomatoForCausalLM(TomatoPreTrainedModel):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
-        self.language_model = LlamaForCausalLM(config.text_config)
+        self.language_model = AutoModelForCausalLM.from_config(config.text_config)
+        # self.language_model = LlamaForCausalLM(config.text_config)
         # self.language_model = LlamaForCausalLM.from_pretrained("deepseek-ai/deepseek-coder-6.7b-base", torch_dtype=config.text_config.torch_dtype)
         
         self.vision_embed_tokens = nn.Linear(
