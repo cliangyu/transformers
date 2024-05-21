@@ -48,7 +48,7 @@ from ...utils import (
     replace_return_docstrings,
 )
 from .configuration_llama import LlamaConfig
-
+from nanotron.nn.layer_norm import TritonRMSNorm
 
 if is_flash_attn_2_available():
     from flash_attn import flash_attn_func, flash_attn_varlen_func
@@ -72,24 +72,25 @@ def _get_unpad_data(attention_mask):
     )
 
 
-class LlamaRMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
-        """
-        LlamaRMSNorm is equivalent to T5LayerNorm
-        """
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
+# class LlamaRMSNorm(nn.Module):
+#     def __init__(self, hidden_size, eps=1e-6):
+#         """
+#         LlamaRMSNorm is equivalent to T5LayerNorm
+#         """
+#         super().__init__()
+#         self.weight = nn.Parameter(torch.ones(hidden_size))
+#         self.variance_epsilon = eps
 
-    def forward(self, hidden_states):
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        return self.weight * hidden_states.to(input_dtype)
+#     def forward(self, hidden_states):
+#         input_dtype = hidden_states.dtype
+#         hidden_states = hidden_states.to(torch.float32)
+#         variance = hidden_states.pow(2).mean(-1, keepdim=True)
+#         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+#         return self.weight * hidden_states.to(input_dtype)
 
 
-ALL_LAYERNORM_LAYERS.append(LlamaRMSNorm)
+# ALL_LAYERNORM_LAYERS.append(LlamaRMSNorm)
+ALL_LAYERNORM_LAYERS.append(TritonRMSNorm)
 
 
 class LlamaRotaryEmbedding(nn.Module):
@@ -678,8 +679,11 @@ class LlamaDecoderLayer(nn.Module):
         self.self_attn = LLAMA_ATTENTION_CLASSES[config._attn_implementation](config=config, layer_idx=layer_idx)
 
         self.mlp = LlamaMLP(config)
-        self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        # self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        # self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = TritonRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = TritonRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        
 
     def forward(
         self,
@@ -877,7 +881,8 @@ class LlamaModel(LlamaPreTrainedModel):
         self.layers = nn.ModuleList(
             [LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
-        self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        # self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = TritonRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.gradient_checkpointing = False
 
         # Initialize weights and apply final processing
